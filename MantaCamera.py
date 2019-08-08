@@ -24,7 +24,7 @@ import numpy as np
 from enum import Enum
 
 @labscript_device
-class Camera(TriggerableDevice):
+class MantaCamera(TriggerableDevice):
     description = 'Generic Camera'
 
     # To be set as instantiation arguments:

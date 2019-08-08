@@ -1,41 +1,36 @@
-from labscript import Device, LabscriptError, set_passed_properties
-from labscript_devices import labscript_device, BLACS_tab, BLACS_worker, runviewer_parser
-import sys
 from __future__ import division, unicode_literals, print_function, absolute_import
 from labscript_utils import PY2
 if PY2:
     str = unicode
 
-# Bitbucket sucks
-
+import sys
+from labscript_devices import labscript_device, BLACS_tab, BLACS_worker, runviewer_parser 
+from labscript import Device, LabscriptError, set_passed_properties
 
 @labscript_device
 class test_device(Device):
     description = 'test device'
-
+    
     @set_passed_properties(
-        property_names={
-            "connection_table_properties": ["name"],
-            "device_properties": ["DoSomething"]}
-    )
-    def __init__(self, name, DoSomething=False, **kwargs):
+        property_names = {
+                 "connection_table_properties": ["name"],
+                 "device_properties": ["DoSomething"]}
+        )
+    def __init__(self, name, DoSomething = False, **kwargs):
         if DoSomething is not False:
-            raise LabscriptError(
-                'test_device does nothing, but kwarg DoSomething was not passed False')
+            raise LabscriptError('test_device does nothing, but kwarg DoSomething was not passed False')
+
 
         Device.__init(self, name, None, None, **kwargs)
-
 
 @BLACS_tab
 class Tab(object):
     pass
-
-
+    
 @BLACS_worker
 class Worker(object):
     pass
-
-
+    
 @runviewer_parser
 class Parser(object):
     pass
