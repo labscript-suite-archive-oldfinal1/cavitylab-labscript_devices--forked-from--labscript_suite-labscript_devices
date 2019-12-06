@@ -90,8 +90,8 @@ class waveform():
         self.sample_start = 0
         self.sample_end = duration
 
-    def add_pulse(self,start_freq,end_freq,ramp_time,phase,amplitude,ramp_type):
-        self.pulses.append(pulse(start_freq,end_freq,ramp_time,phase,amplitude,ramp_type))
+    def add_pulse(self,start_freq,end_freq,ramp_time,phase,amplitude,ramp_type, keyword = None):
+        self.pulses.append(pulse(start_freq,end_freq,ramp_time,phase,amplitude,ramp_type, keyword))
 
     def __str__(self):
         s = "{(" + ",".join([str(i) for i in self.pulses]) + ") on ch. %s at t = %d in %d sec with %d loops}" % (self.port, self.time, self.duration, self.loops)
@@ -295,9 +295,10 @@ class SpectrumM4X6620(Device):
 
     def __init__(self,name,parent_device,trigger,triggerDur=100e-6):
         self.BLACS_connection = 5
-        Device.__init__(self,name,parent_device,connection=self.BLACS_connection)
+        self.name = name
+        Device.__init__(self,name,parent_device, connection = self.BLACS_connection)
         self.set_mode('Off') ## Initialize data structure
-
+        self.connection = self.BLACS_connection
         self.triggerDur = triggerDur
 
         self.raw_waveforms = []
@@ -328,23 +329,28 @@ class SpectrumM4X6620(Device):
     def reset(self, t): # This doesn't do anything but must be here.
         return t
 
-    def single_freq(self, t, duration, freq, amplitude, phase, ch, loops=1):
+    def single_freq(self, t, duration, freq, amplitude, phase, ch, loops=1, keyword = None):
         if duration == 0:
             return t
-        self.sweep_comb(t, duration, [freq], [freq], [amplitude], [phase], ch, 'None', loops)
+        self.sweep_comb(t, duration,
+                        [freq],
+                        [freq],
+                        [amplitude],
+                        [phase],
+                        ch, 'None', loops, keyword)
 
-    def sweep(self, t, duration, start_freq, end_freq, amplitude, phase, ch, ramp_type, loops=1):
+    def sweep(self, t, duration, start_freq, end_freq, amplitude, phase, ch, ramp_type, loops=1, keyword = None):
         if type(start_freq) in [list, np.ndarray]:
             nfreq = len(start_freq)
-            self.sweep_comb(t, duration, start_freq, end_freq, [amplitude] * nfreq, [phase] * nfreq, ch, ramp_type, loops)
+            self.sweep_comb(t, duration, start_freq, end_freq, [amplitude] * nfreq, [phase] * nfreq, ch, ramp_type, loops, keyword)
         else:
-            self.sweep_comb(t, duration, [start_freq], [end_freq], [amplitude], [phase], ch, ramp_type, loops)
+            self.sweep_comb(t, duration, [start_freq], [end_freq], [amplitude], [phase], ch, ramp_type, loops, keyword)
 
-    def comb(self,t,duration,freqs,amplitudes,phases,ch,loops=1):
-        self.sweep_comb(t,duration,freqs,freqs,amplitudes,phases,ch,'None',loops)
+    def comb(self,t,duration,freqs,amplitudes,phases,ch,loops=1, keyword = None):
+        self.sweep_comb(t,duration,freqs,freqs,amplitudes,phases,ch,'None',loops, keyword)
 
     # Function that allows user to initialize a waveform.
-    def sweep_comb(self, t, duration, start_freqs, end_freqs, amplitudes, phases, ch, ramp_type, loops=1):
+    def sweep_comb(self, t, duration, start_freqs, end_freqs, amplitudes, phases, ch, ramp_type, loops=1, keyword = None):
 
         if self.sample_data.mode == 'Off':
             raise LabscriptError('Card has not been properly initialized. Please call set_mode() first.')
@@ -377,9 +383,9 @@ class SpectrumM4X6620(Device):
                           duration,
                           phases[i],
                           amplitudes[i],
-                          ramp_type)
-        if ch == 2:
-            print(wvf)
+                          ramp_type,
+                          keyword)
+
         self.raw_waveforms.append(wvf)
 
         return t+(loops*duration)
@@ -397,11 +403,15 @@ class SpectrumM4X6620(Device):
 
     # Load profile table containing data into h5 file, using the same hierarchical structure from above.
     def generate_code(self, hdf5_file):
-        print "Generating Code"
+        print("Generating Code")
         device = hdf5_file.create_group('/devices/' + self.name)
 
         # Store device settings
-        settings_dtypes = np.dtype([('mode', 'S10'),('clock_freq',np.float),('use_ext_clock',np.int),('ext_clock_freq',np.float)])
+        settings_dtypes = np.dtype([('mode', 'S10'),
+                                    ('clock_freq',np.float),
+                                    ('use_ext_clock',np.int),
+                                    ('ext_clock_freq',np.float)])
+
         settings_table = np.array((0,0,0,0),dtype=settings_dtypes)
         settings_table['mode'] = self.sample_data.mode
         settings_table['clock_freq'] = self.sample_data.clock_freq
@@ -412,6 +422,7 @@ class SpectrumM4X6620(Device):
         # Store channel settings
         channel_dtypes = [('power', np.float),('name','S10'),('port',int)]
         channel_table = np.zeros(len(self.sample_data.channels), dtype=channel_dtypes)
+        print("sample_data.channels: {}".format(self.sample_data.channels))
         for i, channel in enumerate(self.sample_data.channels):
             channel_table[i]['power'] = channel.power
             channel_table[i]['name'] = channel.name
@@ -420,6 +431,7 @@ class SpectrumM4X6620(Device):
 
         # Store waveform groups
         g = device.create_group('waveform_groups')
+        print("sample_data.waveform_groups: {}".format(self.sample_data.waveform_groups))
         for i,group in enumerate(self.sample_data.waveform_groups):
             group_folder = g.create_group('group ' + str(i))
             settings_dtypes = [('time', np.int), ('duration', np.int), ('loops', np.int)]
@@ -459,7 +471,8 @@ class SpectrumM4X6620(Device):
                                   ('ramp_time', np.float),
                                   ('phase', np.float),
                                   ('amp', np.float),
-                                  ('ramp_type',"S10")]
+                                  ('ramp_type',"S10"),
+                                  ('keyword', "S10")]
                 profile_table = np.zeros(len(wvf.pulses), dtype=profile_dtypes)
 
 
@@ -474,7 +487,7 @@ class SpectrumM4X6620(Device):
 
                     profile_table['amp'][j] = pulse.amp
                     profile_table['ramp_type'][j] = pulse.ramp_type
-
+                    profile_table['keyword'][j] = pulse.keyword
                 if 'pulse_data' in grp: ### If waveform already has associated data, add to the existing dataset.
                     d = grp['pulse_data']
                     d.resize((d.shape[0]+profile_table.shape[0]), axis=0)
@@ -516,8 +529,8 @@ class SpectrumM4X6620(Device):
         elif self.sample_data.mode == 'sequence':
             print('SpectrumM4X card is in sequence mode')
 
-            periodicWvfs = filter(lambda k: k.is_periodic == True, self.raw_waveforms)
-            nonPeriodicWvfs = filter(lambda k: k.is_periodic == False, self.raw_waveforms)
+            periodicWvfs = list([k for k in self.raw_waveforms if k.is_periodic == True])
+            nonPeriodicWvfs = list([k for k in self.raw_waveforms if k.is_periodic == False])
 
             nonPeriodicWvfGroups = self.make_waveform_groups(nonPeriodicWvfs)
             self.sample_data.waveform_groups = self.combine_periodic_nonperiodic_groups(periodicWvfs, nonPeriodicWvfGroups)
@@ -582,7 +595,7 @@ class SpectrumM4X6620(Device):
             t0 = flagAddRemoveWvf[groupStartIndices[i]]['t']
             t1 = flagAddRemoveWvf[groupEndIndices[i]]['t']
 
-            wvfsInGroup = filter(lambda k: (k.time >= t0) and (k.time + k.loops * k.duration <= t1), waveforms)
+            wvfsInGroup = list([k for k in waveforms if (k.time >= t0) and (k.time + k.loops * k.duration <= t1)])
 
             totalWvfs += len(wvfsInGroup)
             t_end = -1
@@ -601,7 +614,7 @@ class SpectrumM4X6620(Device):
     # Check for channel collisions (single channel can't do multiple things at once!)
     def check_channel_collisions(self, waveforms):
         for port in range(len(self.sample_data.channels)):
-            wvfsPerPort = filter(lambda k: k.port == port, waveforms)
+            wvfsPerPort = list([k for k in waveforms if k.port == port])
 
             groupsPerPort = self.make_waveform_groups(wvfsPerPort)
 
@@ -623,7 +636,7 @@ class SpectrumM4X6620(Device):
 
 
         result_waveforms = []
-        overlappedWvfs = filter(lambda k: (k.time <= t_end) and (k.time + k.loops * k.duration >= t_start), waveforms)
+        overlappedWvfs = list([k for k in waveforms if (k.time <= t_end) and (k.time + k.loops * k.duration >= t_start)])
 
         overlapGroups = self.make_waveform_groups(overlappedWvfs)
         for ogroup in overlapGroups:
@@ -826,16 +839,16 @@ class SpectrumM4X6620Worker(Worker):
         if err: raise LabscriptError("Error detected in settings: " + str(err))
 
 
-        if self.mode == 'multi':
+        if self.mode == b'multi':
             err = spcm_dwSetParam_i32(self.card, SPC_CARDMODE, SPC_REP_STD_MULTI)
             if err: raise LabscriptError("Error detected in settings: " + str(err))
-        elif self.mode == 'single':
+        elif self.mode == b'single':
             err = spcm_dwSetParam_i32(self.card, SPC_CARDMODE, SPC_REP_STD_SINGLE)
             if err: raise LabscriptError("Error detected in settings: " + str(err))
-        elif self.mode == 'sequence':
+        elif self.mode == b'sequence':
             err = spcm_dwSetParam_i32(self.card, SPC_CARDMODE, SPC_REP_STD_SEQUENCE)
             if err: raise LabscriptError("Error detected in settings: " + str(err))
-        else: self.mode == 'Off' # Default
+        else: self.mode == b'Off' # Default
 
 
 ### These functions don't currently do anything useful, but they could be used to disply useful info on GUI ###
@@ -859,7 +872,8 @@ class SpectrumM4X6620Worker(Worker):
     ## information to the card. Otherwise, the function returns True.
     def generate_buffer(self):
         print("Generating buffer")
-
+        print("Spectrum card in {} mode".format(self.mode))
+        print("does sequence == sequence? {}".format(self.mode == b'sequence'))
         # Iterate over the channels which are on. Set channel-specific
         self.num_chs = len(self.channels)
         if (self.num_chs == 3) or (self.num_chs > 4):
@@ -902,7 +916,7 @@ class SpectrumM4X6620Worker(Worker):
         if err: raise LabscriptError("Error detected in settings: " + str(err))
 
         #### MULTI MODE #### Each segment must be same size.
-        if (self.mode == 'multi'):
+        if (self.mode == b'multi'):
 
             raise LabscriptError("Mode not currently available.")
 
@@ -975,8 +989,9 @@ class SpectrumM4X6620Worker(Worker):
 
 
         #### SEQUENCE MODE ####
-        elif (self.mode == 'sequence'):
+        elif (self.mode == b'sequence'):
             # Sort groups in time order (just in case)
+            print("In sequence mode")
             self.waveform_groups = sorted(self.waveform_groups, key=lambda k: k.time)
 
             # Add dummy sequences between waveform groups
@@ -1068,6 +1083,7 @@ class SpectrumM4X6620Worker(Worker):
             bytes_per_sample = self.bytesPerSample
 
             # Split memory into segments
+            print("self.waveform_groups: {}".format(self.waveform_groups))
             num_segments = len(self.waveform_groups) + 1
             num_segments = int(2**math.ceil(math.log(num_segments,2)))
             spcm_dwSetParam_i32(self.card, SPC_SEQMODE_MAXSEGMENTS, int32(num_segments))
@@ -1092,6 +1108,7 @@ class SpectrumM4X6620Worker(Worker):
                         left = 29
                         today_date = date.today()
                         for pulse in wvf.pulses:
+                            pulse.ramp_type = pulse.ramp_type.decode("utf-8")
                             if pulse.ramp_type in ["linear", "quadratic"]:
                                 get_pulse_index = lambda x: int(x * len(t)/(pulse.ramp_time))
                                 # if wvf.port == 0 and pulse.keyword=="adiabatic": #Microwaves
@@ -1123,7 +1140,7 @@ class SpectrumM4X6620Worker(Worker):
                                         tweezer_time_index = get_pulse_index(self.StatePrepTotalDuration)
                                         sp_pi_pulse_index = get_pulse_index(self.SP_PiPulseDuration) + tweezer_time_index
                                         ramsey_wait_time_index = get_pulse_index(self.SP_RamseyWaitTime)
-                                        sp_se_pulse_index = get_pulse_index(self.SP_SpinEchoDuration) + sp_pi_pulse_index + ramsey_wait_time_index
+                                        sp_se_pulse_index = get_pulse_index(self.SP_SpinEchoDuration) + sp_pi_pulse_index + int(ramsey_wait_time_index*1.5)
                                         sp_ramsey_pulse_index = get_pulse_index(self.SP_RamseyPulseDuration) + sp_se_pulse_index + ramsey_wait_time_index
                                         phase_indices = (self.location_index * tweezer_time_index).astype('int')
                                         phase = self.phase_pattern
@@ -1135,83 +1152,65 @@ class SpectrumM4X6620Worker(Worker):
                                         c_pi = chirp(t[tweezer_time_index:sp_pi_pulse_index], f0=pulse.start, t1=real_ramp_time, f1=pulse.end, method='linear', phi=self.SP_PiPulsePhase)
                                         c_spinecho = chirp(t[sp_pi_pulse_index:sp_se_pulse_index], f0=pulse.start, t1=real_ramp_time, f1=pulse.end, method='linear', phi=self.SP_SpinEchoPhase)
                                         c_ramsey = chirp(t[sp_se_pulse_index:], f0=pulse.start, t1=real_ramp_time, f1=pulse.end, method='linear', phi=self.SP_RamseyPulsePhase)
-                                        print(pulse_data.shape, c1.shape, c2.shape, c3.shape, c_pi.shape, c_spinecho.shape, c_ramsey.shape)
+                                        print((pulse_data.shape, c1.shape, c2.shape, c3.shape, c_pi.shape, c_spinecho.shape, c_ramsey.shape))
                                         pulse_data += pulse.amp * (2**15-1) * np.concatenate([c1, c2, c3, c_pi, c_spinecho, c_ramsey])
                                     elif self.SP_A_DoRamps:
+                                        print((pulse.keyword))
                                         ramp_time_index = get_pulse_index(self.SP_A_RamanSweepDuration)
                                         hold_time_index = get_pulse_index(self.SP_A_RamanHoldTime) + ramp_time_index
                                         ramp_off_time_index = get_pulse_index(self.SP_A_RamanRampOffDur) + hold_time_index
                                         ramsey_time_index = get_pulse_index(self.SP_A_RamseyPulseTime) + ramp_off_time_index
-                                        freq_slope = 1e6 * (self.SP_A_RamanStopFreq - self.SP_A_RamanStartFreq)/self.SP_A_RamanSweepDuration
+                                        freq_slope = 1e6 * (self.SP_A_RamanStopFreq - self.SP_A_RamanStartFreq)/self.SP_A_RamanSweepDuration if self.SP_A_RamanSweepDuration else 0
                                         end_phase = freq_slope * self.SP_A_RamanSweepDuration**2/2 + 1e6*self.SP_A_RamanStartFreq * self.SP_A_RamanSweepDuration
                                         end_phase = (end_phase * 360)
                                         c1 = chirp(t[:ramp_time_index], f0=pulse.start, t1=self.SP_A_RamanSweepDuration if self.SP_A_RamanSweepDuration > 0 else 1, f1=pulse.end, method='linear', phi = 0)
                                         t2 = t[ramp_time_index:ramp_off_time_index]-self.SP_A_RamanSweepDuration
+                                        print(t)
+                                        print(t2)
+                                        print((pulse.end, pulse.ramp_time))
                                         c2 = chirp(t2, f0=pulse.end, t1= pulse.ramp_time, f1=pulse.end, method='linear', phi=end_phase)
                                         cr = chirp(t[ramp_off_time_index:], f0 = MEGA(self.SP_A_RamseyPulseFreq), t1 = pulse.ramp_time, f1 = MEGA(self.SP_A_RamseyPulseFreq), method = "linear", phi = self.SP_A_RamseyPulsePhase)
-                                        print(c1.shape, c2.shape, cr.shape)
+                                        print(c2)
+                                        print((c1.shape, c2.shape, cr.shape))
                                         pulse_data += pulse.amp * (2**15-1) * np.concatenate([c1, c2, cr])
-                                        #
-                                        # self.SP_A_RamanStartFreq = globals.attrs['SP_A_RamanStartFreq']
-                                        # self.SP_A_RamanStopFreq = globals.attrs['SP_A_RamanStopFreq']
-                                        # self.SP_A_RamanSweepDuration = globals.attrs['SP_A_RamanSweepDuration']
-                                        # self.SP_A_RamanHoldTime = globals.attrs['SP_A_RamanHoldTime']
-                                        # self.SP_A_DoRamps = globals.attrs['SP_A_DoRamps']
-                                    else: # Ramsey and spin echo with just tweezer
-                                        wait_time = self.ramsey_wait_time
-                                        half_pi_index = int(self.StatePrepTotalDuration * len(t)/(pulse.ramp_time))
-                                        pulse2_index = int(self.StatePrepPulse2Duration * len(t)/(pulse.ramp_time))
-                                        phase_indices = self.location_index * half_pi_index
-                                        phase_indices = phase_indices.astype('int')
-                                        phase = self.phase_pattern
-                                        on = self.on_pattern
-                                        real_ramp_time = pulse.ramp_time#Tweezer_RamseyWaitTime....should this be wait_time?
-                                        freq_diff = (pulse.end - pulse.start)
-                                        average_freq = pulse.start# + pulse.end)/2
-                                        c1 = chirp(t[:phase_indices[0]], f0=pulse.start, t1=real_ramp_time, f1=pulse.end, method='linear', phi=phase[0]) * on[0]
-                                        c2 = chirp(t[phase_indices[0]:phase_indices[1]], f0=pulse.start, t1=real_ramp_time, f1=pulse.end, method='linear', phi=phase[1]) * on[1]
-                                        c3 = chirp(t[phase_indices[1]:half_pi_index], f0=pulse.start, t1=real_ramp_time, f1=pulse.end, method='linear', phi=phase[2]) * on[2]
-                                        cs = chirp(t[half_pi_index:half_pi_index + pulse2_index], f0=pulse.start, t1=real_ramp_time, f1=pulse.end, method='linear', phi=phase[2])
-                                        cr = chirp(t[half_pi_index + pulse2_index:], f0=average_freq, t1=real_ramp_time, f1=average_freq, method='linear', phi=pulse.phase)
-                                        print c1.shape, c2.shape, c3.shape, cs.shape, cr.shape
-                                        pulse_data += pulse.amp * (2**15-1) * np.concatenate([c1, c2, c3, cs, cr])
-                                        print pulse_data.shape, t.shape
+                                    else:
+                                        pulse_data += pulse.amp * (2**15-1) * chirp(t, f0=pulse.start, t1=pulse.ramp_time, f1=pulse.end, method=pulse.ramp_type, phi=pulse.phase)
                                 else:
                                     pulse_data += pulse.amp * (2**15-1) * chirp(t, f0=pulse.start, t1=pulse.ramp_time, f1=pulse.end, method=pulse.ramp_type, phi=pulse.phase)
                             else: ## If no allowed ramp is specified, then it is assumed that the frequency remains stationary.
                                 get_pulse_index = lambda x: int(x * len(t)/(pulse.ramp_time))
-
-                                if wvf.port == 0 and pulse.keyword = "adiabatic":
+                                if wvf.port == 0 and pulse.keyword == "adiabatic":
                                     uwave_ramp_end_index = get_pulse_index(self.SP_A_uWaveRampDuration)
                                     uwave_amp_ramp = pulse.amp * (2**15-1) * np.linspace(0, 1, len(t[:uwave_ramp_end_index]))
                                     uwave_amp_hold = pulse.amp * (2**15-1) * np.linspace(1, 1, len(t[uwave_ramp_end_index:]))
                                     uwave_amp = np.concatenate([uwave_amp_ramp, uwave_amp_hold])
                                     pulse_data += uwave_amp * chirp(t, f0=pulse.start, t1=pulse.ramp_time, f1=pulse.end, method='linear', phi=pulse.phase)
-                                if wvf.port == 2: #probe adiabatic sweep
-                                    if self.PR_Cavity_Ramp:
+                                elif wvf.port == 2: #probe adiabatic sweep
+                                    if  pulse.keyword == "proberamp":
+                                        print((pulse.keyword))
                                         pr_ramp_end_index = get_pulse_index(self.PR_RampDuration)
                                         pr_amp_ramp = pulse.amp * (2**15-1) * np.linspace(0, 1, len(t[:pr_ramp_end_index]))
                                         pr_amp_hold = pulse.amp * (2**15-1) * np.linspace(1, 1, len(t[pr_ramp_end_index:]))
                                         pr_amp = np.concatenate([pr_amp_ramp, pr_amp_hold])
-                                        print("pulse.ramp_time: ", pulse.ramp_time)
-                                        print("pr_ramp_end_index: ", pr_ramp_end_index)
-                                        print("len(t): ", len(t))
-                                        print("len(t[pr_ramp_end_index:]): ", len(t[pr_ramp_end_index:]))
+                                        print(("pulse.ramp_time: ", pulse.ramp_time))
+                                        print(("pr_ramp_end_index: ", pr_ramp_end_index))
+                                        print(("len(t): ", len(t)))
+                                        print(("len(t[pr_ramp_end_index:]): ", len(t[pr_ramp_end_index:])))
                                         #print(float(pr_ramp_end_index)/len(t[pr_ramp_end_index:]))
-                                        print("Probe amp: ", pr_amp)
+                                        print(("Probe amp: ", pr_amp))
                                         pulse_data += pr_amp * chirp(t, f0=pulse.start, t1=pulse.ramp_time, f1=pulse.end, method='linear', phi=pulse.phase)
+                                    elif pulse.keyword == "probehold":
+                                        pulse_data += pulse.amp * (2**15-1) * chirp(t, f0=pulse.start, t1=pulse.ramp_time, f1=pulse.start, method='linear', phi=pulse.phase)
                                     else:
                                         pulse_data += pulse.amp * (2**15-1) * chirp(t, f0=pulse.start, t1=pulse.ramp_time, f1=pulse.start, method='linear', phi=pulse.phase)
                                 else:
                                     pulse_data += pulse.amp * (2**15-1) * chirp(t, f0=pulse.start, t1=pulse.ramp_time, f1=pulse.start, method='linear', phi=pulse.phase)
-
                         pulse_data = pulse_data.astype(int16)
                         begin = (wvf.time - group.time) * samples_per_chunk * int(self.num_chs) + wvf.port
                         end = begin + (len(pulse_data) * int(self.num_chs))
                         increment = int(self.num_chs)
                         #pulse_data = np.resize(pulse_data, np_waveform[begin:end:increment].shape)
                         np_waveform[begin:end:increment] = pulse_data
-
                 memmove(pBuffer, np_waveform.ctypes.data_as(ptr16), buffer_size)
 
                 # Write buffer
@@ -1243,8 +1242,7 @@ class SpectrumM4X6620Worker(Worker):
 
 
         #### SINGLE MODE #### -- useful to loop over one frequency for an extended period of time.
-        elif (self.mode == 'single'):
-            raise LabscriptError("Mode not currently available.")
+        elif (self.mode == b'single'):
 
 #             ch = self.channels[0]
 #             if not ch.segments: return False
@@ -1284,6 +1282,7 @@ class SpectrumM4X6620Worker(Worker):
 #                 err = spcm_dwSetParam_i32(self.card, SPC_LOOPS, uint32(self.loops))
 #                 if err:
 #                     raise LabscriptError("Error detected in settings: " + str(err))
+            raise LabscriptError("Mode not currently available.")
 
         return True
 
@@ -1343,8 +1342,8 @@ class SpectrumM4X6620Worker(Worker):
             self.SP_A_RamseyPulsePhase = globals.attrs['SP_A_RamseyPulsePhase']
 
             self.SP_A_uWaveRampDuration = globals.attrs['SP_A_uWaveRampDuration']
-            self.SP_A_uWaveHoldTime = globals.attrs['SP_A_uWaveHoldTime']
-            self.SP_A_uWaveRampOffDur = globals.attrs['SP_A_uWaveRampOffDur']
+            # self.SP_A_uWaveHoldTime = globals.attrs['SP_A_uWaveHoldTime']
+            # self.SP_A_uWaveRampOffDur = globals.attrs['SP_A_uWaveRampOffDur']
 
             self.PR_Cavity_Ramp = globals.attrs['PR_Cavity_Ramp']
             self.PR_RampDuration = globals.attrs['PR_RampDuration']
@@ -1362,7 +1361,7 @@ class SpectrumM4X6620Worker(Worker):
 
             groups_folder = device['waveform_groups']
 
-            for groupname in groups_folder.iterkeys():
+            for groupname in list(groups_folder.keys()):
                 g = groups_folder[groupname]
                 gsettings = g['group_settings']
                 time = gsettings['time']
@@ -1370,11 +1369,11 @@ class SpectrumM4X6620Worker(Worker):
                 loops = gsettings['loops']
                 waveforms = []
 
-                for wavename in g.iterkeys():
+                for wavename in list(g.keys()):
                     if wavename != 'group_settings':
                         wvf = waveform(0, 0, 0)
                         s = g[wavename]
-                        for p in s.iterkeys():
+                        for p in list(s.keys()):
                             if p == 'waveform_settings':
                                 wvf.time = s['waveform_settings']['time'][0]
                                 wvf.duration = s['waveform_settings']['duration'][0]
@@ -1392,7 +1391,8 @@ class SpectrumM4X6620Worker(Worker):
                                     phase = dset['phase'][i]
                                     amplitude = dset['amp'][i]
                                     ramp_type = dset['ramp_type'][i]
-                                    wvf.add_pulse(start_freq, end_freq, ramp_time, phase, amplitude,ramp_type)
+                                    keyword = dset['keyword'][i]
+                                    wvf.add_pulse(start_freq, end_freq, ramp_time, phase, amplitude,ramp_type, keyword)
                         waveforms.append(wvf)
 
                 self.waveform_groups.append(waveform_group(time,duration,waveforms,loops))

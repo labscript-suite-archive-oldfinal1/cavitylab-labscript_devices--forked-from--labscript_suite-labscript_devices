@@ -10,20 +10,21 @@
 # the project for the full license.                                 #
 #                                                                   #
 #####################################################################
+from __future__ import division, unicode_literals, print_function, absolute_import
 
-try:
-    from labscript_utils import check_version
-except ImportError:
-    raise ImportError('Require labscript_utils > 2.1.0')
-
+from labscript_utils import check_version
 check_version('labscript', '2.0.1', '3')
+check_version('zprocess', '2.4.8', '3')
+from labscript_utils import PY2
+if PY2:
+    str = unicode
 
-from labscript_devices import labscript_device, BLACS_tab, BLACS_worker
+from labscript_devices import BLACS_tab
 from labscript import TriggerableDevice, LabscriptError, set_passed_properties
 import numpy as np
 from enum import Enum
 
-@labscript_device
+
 class Camera(TriggerableDevice):
     description = 'Generic Camera'
 
@@ -76,12 +77,12 @@ class Camera(TriggerableDevice):
         TriggerableDevice.__init__(self, name, parent_device, connection, **kwargs)
 
     def set_cam_param(self, param, value):
-        if self.other_params.has_key(param):
+        if param in self.other_params:
             self.other_params[param] = value
         else:
             raise LabscriptError('Camera parameter %s does not exist in dictionary'%param)
 
-    def expose(self, name, t, frametype, exposure_time=None):
+    def expose(self, name, t , frametype, exposure_time=None):
         if exposure_time is None:
             duration = self.exposure_time
         else:
@@ -141,15 +142,12 @@ class Camera(TriggerableDevice):
         # DEPRECATED backward campatibility for use of exposuretime keyword argument instead of exposure_time:
         self.set_property('exposure_time', self.exposure_time, location='device_properties', overwrite=True)
 
-
         if len(self.other_params) > 0:
             for key in self.other_params:
                 if isinstance(self.other_params[key], Camera.Param):
                     group.attrs[key] = self.other_params[key].name
                 else:
                     group.attrs[key] = self.other_params[key]
-
-
 
 import os
 
@@ -185,7 +183,6 @@ class CameraTab(DeviceTab):
         return {'host': str(self.ui.host_lineEdit.text()), 'use_zmq': self.ui.use_zmq_checkBox.isChecked()}
 
     def restore_save_data(self, save_data):
-        print 'restore save data running'
         if save_data:
             host = save_data['host']
             self.ui.host_lineEdit.setText(host)
@@ -229,12 +226,9 @@ class CameraTab(DeviceTab):
         self.ui.status_icon.setPixmap(pixmap)
         self.ui.server_status.setText(status_text)
 
-@BLACS_worker
+
 class CameraWorker(Worker):
-    def init(self):#, port, host, use_zmq):
-#        self.port = port
-#        self.host = host
-#        self.use_zmq = use_zmq
+    def init(self):
         global socket; import socket
         global zmq; import zmq
         global zprocess; import zprocess
@@ -251,7 +245,7 @@ class CameraWorker(Worker):
         if not self.use_zmq:
             return self.initialise_sockets(self.host, self.port)
         else:
-            response = zprocess.zmq_get_raw(self.port, self.host, data='hello')
+            response = zprocess.zmq_get_string(self.port, self.host, data='hello')
             if response == 'hello':
                 return True
             else:
@@ -264,8 +258,8 @@ class CameraWorker(Worker):
         assert str(int(port)) == port, 'Port must be an integer.'
         s.settimeout(10)
         s.connect((host, int(port)))
-        s.send('hello\r\n')
-        response = s.recv(1024)
+        s.send(b'hello\r\n')
+        response = s.recv(1024).decode('utf8')
         s.close()
         if 'hello' in response:
             return True
@@ -273,13 +267,13 @@ class CameraWorker(Worker):
             raise Exception('invalid response from server: ' + response)
 
     def transition_to_buffered(self, device_name, h5file, initial_values, fresh):
-#         h5file = shared_drive.path_to_agnostic(h5file)
+        h5file = shared_drive.path_to_local(h5file)
         if not self.use_zmq:
             return self.transition_to_buffered_sockets(h5file,self.host, self.port)
-        response = zprocess.zmq_get_raw(self.port, self.host, data=h5file.encode('utf-8'))
+        response = zprocess.zmq_get_string(self.port, self.host, data=h5file)
         if response != 'ok':
             raise Exception('invalid response from server: ' + str(response))
-        response = zprocess.zmq_get_raw(self.port, self.host, timeout = 10)
+        response = zprocess.zmq_get_string(self.port, self.host, timeout = 10)
         if response != 'done':
             raise Exception('invalid response from server: ' + str(response))
         return {} # indicates final values of buffered run, we have none
@@ -288,12 +282,12 @@ class CameraWorker(Worker):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(120)
         s.connect((host, int(port)))
-        s.send('%s\r\n'%h5file)
-        response = s.recv(1024)
+        s.send(b'%s\r\n' % h5file.encode('utf8'))
+        response = s.recv(1024).decode('utf8')
         if not 'ok' in response:
             s.close()
             raise Exception(response)
-        response = s.recv(1024)
+        response = s.recv(1024).decode('utf8')
         if not 'done' in response:
             s.close()
             raise Exception(response)
@@ -302,10 +296,10 @@ class CameraWorker(Worker):
     def transition_to_manual(self):
         if not self.use_zmq:
             return self.transition_to_manual_sockets(self.host, self.port)
-        response = zprocess.zmq_get_raw(self.port, self.host, 'done')
+        response = zprocess.zmq_get_string(self.port, self.host, 'done')
         if response != 'ok':
             raise Exception('invalid response from server: ' + str(response))
-        response = zprocess.zmq_get_raw(self.port, self.host, timeout = 10)
+        response = zprocess.zmq_get_string(self.port, self.host, timeout = 10)
         if response != 'done':
             raise Exception('invalid response from server: ' + str(response))
         return True # indicates success
@@ -314,12 +308,12 @@ class CameraWorker(Worker):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(120)
         s.connect((host, int(port)))
-        s.send('done\r\n')
-        response = s.recv(1024)
+        s.send(b'done\r\n')
+        response = s.recv(1024).decode('utf8')
         if response != 'ok\r\n':
             s.close()
             raise Exception(response)
-        response = s.recv(1024)
+        response = s.recv(1024).decode('utf8')
         if not 'done' in response:
             s.close()
             raise Exception(response)
@@ -334,7 +328,7 @@ class CameraWorker(Worker):
     def abort(self):
         if not self.use_zmq:
             return self.abort_sockets(self.host, self.port)
-        response = zprocess.zmq_get_raw(self.port, self.host, 'abort')
+        response = zprocess.zmq_get_string(self.port, self.host, 'abort')
         if response != 'done':
             raise Exception('invalid response from server: ' + str(response))
         return True # indicates success
@@ -343,8 +337,8 @@ class CameraWorker(Worker):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(120)
         s.connect((host, int(port)))
-        s.send('abort\r\n')
-        response = s.recv(1024)
+        s.send(b'abort\r\n')
+        response = s.recv(1024).decode('utf8')
         if not 'done' in response:
             s.close()
             raise Exception(response)
@@ -355,4 +349,3 @@ class CameraWorker(Worker):
 
     def shutdown(self):
         return
-
